@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css" integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
+
+      <link rel="icon" href="data:,">
+    <title>User Info</title>
+  </head>
+  <body>
+      <div>
+        <h1 class="d-flex justify-content-center">User Information</h1>
+
+        <table style="margin-left:auto; margin-right:auto">
+            <tbody>
+              <tr>
+                <th style="padding:10px">First Name</th>
+                <th style="padding:10px">Last Name</th>
+              </tr>
+              <tr>
+                <td style="padding:10px">{{ f_name }}</td>
+                <td style="padding:10px">{{ l_name }}</td>
+              </tr>
+            </tbody>
+        </table>
+
+        <table style="margin-left:auto; margin-right:auto">
+          <tbody>
+            <tr>
+              <th style="padding:10px">User ID</th>
+              <th style="padding:10px">ID Token</th>
+            </tr>
+            <tr>
+              <td style="padding:10px">{{ sub }}</td>
+              <td style="padding:10px; word-wrap: break-word; max-width: 800px">{{ id_token }}</td>
+            </tr>
+          </tbody>
+        </table>
+
+      </div>
+
+    <script src="https://code.jquery.com/jquery-3.4.1.slim.min.js" integrity="sha384-J6qa4849blE2+poT4WnyKhv5vZF5SrPo0iEjwBvKU7imGFAV0wwj1yYfoRSJoZ+n" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.0/dist/umd/popper.min.js" integrity="sha384-Q6E9RHvbIyZFJoft+2mJbHaEWldlvI9IOYy5n3zV9zzTtmI3UksdQRVvoxMfooAo" crossorigin="anonymous"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js" integrity="sha384-wfSDF2E50Y2D1uUdj0O3uMBJnjuUD4Ih7YwaYd1iqfktj0Uod8GCExl3Og8ifwB6" crossorigin="anonymous"></script>
+  </body>
+</html>
