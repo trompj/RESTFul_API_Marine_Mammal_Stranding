@@ -26,6 +26,45 @@ REDIRECT_URI = 'http://localhost:8080/user_info'
 app.secret_key = b'_5#y2L"F4Q88z\n\xec]/'
 
 
+# Check that JWT is valid and if not, return None, otherwise return sub value
+def validate_authorization_page(req, jwt):
+    # If authorization does not exist, throw 401
+    if id_token == None:
+        return None
+
+    try:
+        # Verify that JWT is valid
+        id_info = id_token.verify_oauth2_token(jwt, req, CLIENT_ID)
+    except:
+        # If invalid, set to None
+        id_info = None
+
+    if id_info == None:
+        return None
+    else:
+        return id_info['sub']
+
+# Add user to datastore if does not exist already
+def add_user(sub, first_name, last_name):
+    # Create a mammal entity with given values
+    new_user = datastore.entity.Entity(key=client.key(constants.users))
+    new_user.update({"username": sub, "first_name": first_name, "last_name": last_name, "strandings": []})
+
+    # Send created mammal to datastore
+    client.put(new_user)
+
+# Check if user exists in datastore. Return None if not found. Otherwise, return user.
+def user_exists(sub):
+    query = client.query(kind=constants.users)
+    query.add_filter('username', '=', sub)
+
+    results = list(query.fetch())
+
+    if len(results) == 0:
+        return None
+
+    return results
+
 # Check latitude for valid values. If not, return False. Otherwise, return True.
 def valid_lat(latitude):
     if latitude < -90 or latitude > 90:
@@ -42,32 +81,6 @@ def valid_long(longitude):
 
     else:
         return True
-
-
-# def unique_boat_name(name, client, key):
-#     query = client.query(kind=constants.boat)
-#     query.add_filter('name', '=', name)
-#
-#     results = list(query.fetch())
-#
-#     # If no key provided, then entity isn't being updated
-#     if key == None:
-#         if len(results) == 0:
-#             return True
-#         else:
-#             return False
-#
-#     # If a key is provided, then entity is being updated and must compare key if one entity is found. This will
-#     # allow the entity to set the same name if it has the same key value.
-#     else:
-#         if len(results) > 1:
-#             return False
-#         elif len(results) == 0:
-#             return True
-#         elif key == results[0].key:
-#             return True
-#         else:
-#             return False
 
 
 # Check that fields match type restrictions for stranding entity and return corresponding error message
@@ -133,30 +146,76 @@ def field_constraint_check(stranding_content, is_mammal):
 
 # Check that JWT is valid and if not, return None, otherwise return sub value
 def validate_authorization(req):
-    # bearer = request.headers.get('Authorization')
-    #
-    # # If authorization does not exist, throw 401
-    # if bearer == None:
-    #     return None
-    #
-    # bearer = bearer.split(" ")
-    #
-    # try:
-    #     # Verify that JWT is valid
-    #     id_info = id_token.verify_oauth2_token(bearer[1], req, CLIENT_ID)
-    # except:
-    #     # If invalid, set to None
-    #     id_info = None
-    #
-    # if id_info == None:
-    #     return None
-    # else:
-    #     return id_info['sub']
-    return "213213"
+    bearer = request.headers.get('Authorization')
+
+    # If authorization does not exist, throw 401
+    if bearer == None:
+        return None
+
+    bearer = bearer.split(" ")
+
+    try:
+        # Verify that JWT is valid
+        id_info = id_token.verify_oauth2_token(bearer[1], req, CLIENT_ID)
+    except:
+        # If invalid, set to None
+        id_info = None
+
+    if id_info == None:
+        return None
+    else:
+        return id_info['sub']
+
+
+# Add a stranding to a user entity
+def add_stranding_user(client, new_stranding):
+    # Get a user by their unique username
+    query = client.query(kind=constants.users)
+    query.add_filter('username', '=', new_stranding.get("responder"))
+
+    user_list = list(query.fetch())
+
+    user_stranding = {
+        "id": new_stranding.id,
+        "latitude": new_stranding.get("latitude"),
+        "longitude": new_stranding.get("longitude")
+    }
+
+    user = None
+    # Ensure that only one user is returned and assign to user
+    if len(user_list) == 1:
+        user = user_list[0]
+
+        user['strandings'].append(user_stranding)
+
+    client.put(user)
+
+# Remove a stranding from a user entity
+def remove_stranding_user(client, stranding):
+    # Get a user by their unique username
+    query = client.query(kind=constants.users)
+    query.add_filter('username', '=', stranding.get("responder"))
+
+    user_list = list(query.fetch())
+
+    user = None
+    # Ensure that only one user is returned and assign to user
+    if len(user_list) == 1:
+        user = user_list[0]
+
+        idx = 0
+        # Loop through strandings in user and remove when found
+        for user_stranding in user.get("strandings"):
+            if user_stranding.get("id") == stranding.id:
+                user.get("strandings").pop(idx)
+                break
+            idx += 1
+
+    client.put(user)
 
 
 # Get all strandings and add a stranding. Strandings added will have empty arrays of mammals and an empty responder.
-@app.route('/strandings', methods={'GET', 'POST'})
+@app.route('/strandings', methods={'GET', 'POST', 'PATCH', 'PUT', 'DELETE'})
 def stranding_get_add():
     req = google_req.Request()
 
@@ -205,10 +264,13 @@ def stranding_get_add():
                 # Create a stranding entity with given values
                 new_stranding = datastore.entity.Entity(key=client.key(constants.strandings))
                 new_stranding.update({"longitude": content["longitude"], "latitude": content["latitude"],
-                                      "note": note, "responder": "", "mammals": []})
+                                      "note": note, "responder": sub, "mammals": []})
 
                 # Send created stranding to datastore
                 client.put(new_stranding)
+
+                # Add stranding to user entity when created
+                add_stranding_user(client, new_stranding)
 
                 live_link = request.base_url + str(new_stranding.id)
                 # Set response
@@ -217,7 +279,7 @@ def stranding_get_add():
                     'longitude': new_stranding.get("longitude"),
                     'latitude': new_stranding.get("latitude"),
                     'note': new_stranding.get("note"),
-                    'responder': "",
+                    'responder': new_stranding.get("responder"),
                     'mammals': [],
                     'self': live_link
                 }
@@ -245,14 +307,48 @@ def stranding_get_add():
 
     # Get all boats and output
     elif request.method == 'GET':
+        if request.accept_mimetypes != "application/json" and request.accept_mimetypes.accept_json != True:
+            response = make_response(jsonify(Error="Content type to be returned can only be "
+                                                   "application/json"))
+            response.mimetype = "application/json"
+            response.status_code = 406
+
+            return response
+
+        # Check if authorization is valid
+        sub = validate_authorization(req)
+
+        # If authorization does not exist or is invalid, throw 401
+        if sub == None:
+            response = make_response(jsonify(Error="Must provide a valid bearer token."))
+            response.mimetype = "application/json"
+            response.status_code = 401
+
+            return response
+
         query = client.query(kind=constants.strandings)
-        results = list(query.fetch())
+
+        # Add filter to only get strandings associated with responder
+        query.add_filter("responder", "=", sub)
+
+        # Implement pagination of 5 entities with a next link
+        q_limit = int(request.args.get('limit', '5'))
+        q_offset = int(request.args.get('offset', '0'))
+        list_iterator = query.fetch(limit=q_limit, offset=q_offset)
+        pages = list_iterator.pages
+        results = list(next(pages))
+
+        if list_iterator.next_page_token:
+            next_offset = q_offset + q_limit
+            next_url = request.base_url + "?limit=" + str(q_limit) + "&offset=" + str(next_offset)
+        else:
+            next_url = None
 
         result_list = []
         for e in results:
             dict_result = dict(e)
 
-            live_link = request.base_url + str(e.key.id)
+            live_link = request.base_url + "/" + str(e.key.id)
 
             entity = {
                 'id': e.key.id,
@@ -265,19 +361,32 @@ def stranding_get_add():
             }
 
             result_list.append(entity)
-        return jsonify(result_list), 200
+
+        output = {"strandings": result_list}
+
+        # Add count of page of results and total count of entities
+        list_all = list(query.fetch())
+        output["count"] = len(results)
+        output["total"] = len(list_all)
+
+        # Add next_url to the list outputted
+        if next_url:
+            output["next"] = next_url
+
+        return jsonify(output), 200
 
     # Incorrect request found
     else:
-        response = make_response(jsonify(Error="Method not found"))
+        response = make_response(
+            jsonify(Error="Method not allowed on /strandings. Use POST or GET"))
         response.mimetype = "application/json"
-        response.status_code = 404
+        response.status_code = 405
 
         return response
 
 
 # Get a stranding, edit a stranding, or delete a stranding
-@app.route('/strandings/<id>', methods={'GET', 'DELETE', 'PATCH', 'PUT'})
+@app.route('/strandings/<id>', methods={'GET', 'DELETE', 'PATCH', 'PUT', 'POST'})
 def stranding_delete_update(id):
     req = google_req.Request()
 
@@ -306,16 +415,25 @@ def stranding_delete_update(id):
 
         return response
 
-    # If the owner does not match the sub of authorization, then return no ID exists and 403
-    # elif stranding['responder'] != sub:
-    #     response = make_response(jsonify(Error="No stranding with this ID exists"))
-    #     response.mimetype = "application/json"
-    #     response.status_code = 403
-    #
-    #     return response
+    # If the responder does not match the sub of authorization, then return no ID exists and 403
+    elif stranding['responder'] != sub:
+        response = make_response(jsonify(Error="No stranding with this ID exists"))
+        response.mimetype = "application/json"
+        response.status_code = 403
+
+        return response
 
     # Find stranding with created key
     if request.method == 'GET':
+        # Check request accept type and ensure either all types or application/json
+        if request.accept_mimetypes != "application/json" and request.accept_mimetypes.accept_json != True:
+            response = make_response(jsonify(Error="Content type to be returned can only be "
+                                                   "application/json"))
+            response.mimetype = "application/json"
+            response.status_code = 406
+
+            return response
+
         # Create query
         query = client.query(kind=constants.strandings)
         query.key_filter(key, '=')
@@ -358,21 +476,8 @@ def stranding_delete_update(id):
 
             # If there are responder active on the stranding, remove each responder
             if stranding.get('responder') != "":
-                responder = stranding.get('responder')
-
-                # Create key based on ID for mammal and get mammal
-                key = client.key(constants.responders, int(responder.get('id')))
-                responder = client.get(key=key)
-
-                stranding_list = []
-                # Loop through each stranding in responder list and add all except entity being deleted
-                for stranding in responder.get('strandings'):
-                    if stranding.get('id') != id:
-                        stranding_list.append(stranding)
-
-                # Update responder with stranding list that no longer has the stranding being deleted
-                responder.update({"strandings": stranding_list})
-                client.put(responder)
+                # Remove stranding from user
+                remove_stranding_user(client, stranding)
 
             # If there are mammals associated with the stranding, remove stranding from each mammal.
             if stranding.get('mammals') != []:
@@ -484,13 +589,17 @@ def stranding_delete_update(id):
 
             return response
 
-    # Incorrect request found
     else:
-        return jsonify(Error='Method not accepted')
+        response = make_response(
+            jsonify(Error="Method not allowed on /strandings/<id>. Use PATCH, PUT, DELETE, or GET."))
+        response.mimetype = "application/json"
+        response.status_code = 405
+
+        return response
 
 
 # Get all mammals and add a mammal. Mammals added will not be assigned to a stranding initially.
-@app.route('/mammals', methods={'GET', 'POST'})
+@app.route('/mammals', methods={'GET', 'POST', 'PUT', 'PATCH', 'DELETE'})
 def mammal_get_add():
     req = google_req.Request()
 
@@ -508,17 +617,6 @@ def mammal_get_add():
                 return response
 
             content = request.get_json()
-
-            # Check if authorization is valid
-            sub = validate_authorization(req)
-
-            # If authorization does not exist or is invalid, throw 401
-            if sub == None:
-                response = make_response(jsonify(Error="Must provide a valid bearer token."))
-                response.mimetype = "application/json"
-                response.status_code = 401
-
-                return response
 
             # Check that all three required JSON attributes are present
             if all([field in content.keys() for field in ['species', 'alive', 'note']]):
@@ -578,14 +676,35 @@ def mammal_get_add():
 
     # Get all mammals and output
     elif request.method == 'GET':
+        # Check request accept type and ensure either all types or application/json
+        if request.accept_mimetypes != "application/json" and request.accept_mimetypes.accept_json != True:
+            response = make_response(jsonify(Error="Content type to be returned can only be "
+                                                   "application/json"))
+            response.mimetype = "application/json"
+            response.status_code = 406
+
+            return response
+
         query = client.query(kind=constants.mammals)
-        results = list(query.fetch())
+
+        # Implement pagination of 5 entities with a next link
+        q_limit = int(request.args.get('limit', '5'))
+        q_offset = int(request.args.get('offset', '0'))
+        list_iterator = query.fetch(limit=q_limit, offset=q_offset)
+        pages = list_iterator.pages
+        results = list(next(pages))
+
+        if list_iterator.next_page_token:
+            next_offset = q_offset + q_limit
+            next_url = request.base_url + "?limit=" + str(q_limit) + "&offset=" + str(next_offset)
+        else:
+            next_url = None
 
         result_list = []
         for e in results:
             dict_result = dict(e)
 
-            live_link = request.base_url + str(e.key.id)
+            live_link = request.base_url + "/" + str(e.key.id)
 
             entity = {
                 'id': e.key.id,
@@ -597,57 +716,57 @@ def mammal_get_add():
             }
 
             result_list.append(entity)
-        return jsonify(result_list), 200
 
-    # Incorrect request found
+        output = {"mammals": result_list}
+
+        # Add count of page of results and total count of entities
+        list_all = list(query.fetch())
+        output["count"] = len(results)
+        output["total"] = len(list_all)
+
+        # Add next_url to the list outputted
+        if next_url:
+            output["next"] = next_url
+
+        return jsonify(output), 200
+
     else:
-        response = make_response(jsonify(Error="Method not found"))
+        response = make_response(
+            jsonify(Error="Method not allowed on /mammals. Use POST or GET"))
         response.mimetype = "application/json"
-        response.status_code = 404
+        response.status_code = 405
 
         return response
 
 
 # Get a mammal, edit a mammal, or delete a mammal
-@app.route('/mammals/<id>', methods={'GET', 'DELETE', 'PATCH', 'PUT'})
+@app.route('/mammals/<id>', methods={'GET', 'DELETE', 'PATCH', 'PUT', 'POST'})
 def mammal_get_delete_update(id):
-    req = google_req.Request()
-
     # Create key based on ID for stranding
     key = client.key(constants.mammals, int(id))
 
     # Get stranding based on key and update value(s)
     mammal = client.get(key=key)
 
-    # Check if authorization is valid
-    sub = validate_authorization(req)
-
-    # If authorization does not exist or is invalid, throw 401
-    if sub == None:
-        response = make_response(jsonify(Error="Must provide a valid bearer token."))
-        response.mimetype = "application/json"
-        response.status_code = 401
-
-        return response
-
     # If the mammal is not found and JWT is valid, return 403
     if mammal == None:
         response = make_response(jsonify(Error="No mammal with this ID exists"))
         response.mimetype = "application/json"
-        response.status_code = 403
+        response.status_code = 404
 
         return response
 
-    # If the owner does not match the sub of authorization, then return no ID exists and 403
-    # elif mammal['responder'] != sub:
-    #     response = make_response(jsonify(Error="No mammal with this ID exists"))
-    #     response.mimetype = "application/json"
-    #     response.status_code = 403
-    #
-    #     return response
-
     # Find mammal with created key
     if request.method == 'GET':
+        # Check request accept type and ensure either all types or application/json
+        if request.accept_mimetypes != "application/json" and request.accept_mimetypes.accept_json != True:
+            response = make_response(jsonify(Error="Content type to be returned can only be "
+                                                   "application/json"))
+            response.mimetype = "application/json"
+            response.status_code = 406
+
+            return response
+
         dict_result = dict(mammal)
 
         live_link = request.base_url
@@ -780,14 +899,21 @@ def mammal_get_delete_update(id):
 
             return response
 
-    # Incorrect request found
     else:
-        return jsonify(Error='Method not accepted')
+        response = make_response(
+            jsonify(Error="Method not allowed on /mammals/<id>. Use PATCH, PUT, DELETE, or GET"))
+        response.mimetype = "application/json"
+        response.status_code = 405
+
+        return response
 
 
 # Add or remove a mammal from a stranding
-@app.route('/strandings/<stranding_id>/mammals/<mammal_id>', methods={'PUT', 'DELETE'})
+@app.route('/strandings/<stranding_id>/mammals/<mammal_id>', methods={'PUT', 'DELETE', 'GET', 'PATCH', 'POST'})
 def add_remove_mammal_stranding(stranding_id, mammal_id):
+    req = google_req.Request()
+    req = google_req.Request()
+
     # Create key based on ID for stranding
     stranding_key = client.key(constants.strandings, int(stranding_id))
     # Create key based on ID for mammal
@@ -809,10 +935,28 @@ def add_remove_mammal_stranding(stranding_id, mammal_id):
 
     # If either a stranding or a mammal are not found, return error and 404
     if len(mammal_result) == 0 or len(stranding_result) == 0:
-        return jsonify(Error="The specified stranding and/or mammal do not exist"), 404
+        return jsonify(Error="The specified stranding and/or mammal do not exist."), 404
 
     mammal = mammal_result[0]
     stranding = stranding_result[0]
+
+    # Check if authorization is valid
+    sub = validate_authorization(req)
+
+    # If authorization does not exist or is invalid, throw 401
+    if sub == None:
+        response = make_response(jsonify(Error="Must provide a valid bearer token."))
+        response.mimetype = "application/json"
+        response.status_code = 401
+
+        return response
+
+    if sub != stranding.get("responder"):
+        response = make_response(jsonify(Error="Operation not allowed on entity."))
+        response.mimetype = "application/json"
+        response.status_code = 403
+
+        return response
 
     # Adds a mammal to a stranding
     if request.method == 'PUT':
@@ -842,7 +986,7 @@ def add_remove_mammal_stranding(stranding_id, mammal_id):
         # Removes mammal from the stranding and removes stranding from mammal
         # If the mammal is already assigned, return 403 and error
         if mammal.get("stranding") == "" or mammal.get("stranding") != stranding_id:
-            return jsonify(Error="The mammal not assigned to a stranding or is assigned to a different stranding"), 403
+            return jsonify(Error="The mammal is not assigned to a stranding or is assigned to a different stranding"), 403
         # If the mammal is assigned to the stranding, remove it from the stranding and return 204
         else:
             # Remove stranding from mammal and set to empty
@@ -850,8 +994,8 @@ def add_remove_mammal_stranding(stranding_id, mammal_id):
 
             idx = 0
             # Find and mammal from stranding
-            for mammal in stranding.get("mammals"):
-                if mammal.get("id") == mammal_id:
+            for stranding_mammal in stranding.get("mammals"):
+                if stranding_mammal.get("id") == mammal_id:
                     stranding.get("mammals").pop(idx)
 
                 idx += 1
@@ -861,8 +1005,17 @@ def add_remove_mammal_stranding(stranding_id, mammal_id):
 
             return '', 204
 
+    else:
+        response = make_response(
+            jsonify(Error="Method not allowed on /strandings/<stranding_id>/mammals/<mammal_id>. Use PUT or DELETE"))
+        response.mimetype = "application/json"
+        response.status_code = 405
+
+        return response
+
+
 # Get all users.
-@app.route('/users', methods={'GET'})
+@app.route('/users', methods={'GET', 'PUT', 'PATCH', 'DELETE', 'POST'})
 def users_get():
     # Get all users and output
     if request.method == 'GET':
@@ -878,62 +1031,19 @@ def users_get():
                 'username': dict_result.get("username"),
                 'first_name': dict_result.get("first_name"),
                 'last_name': dict_result.get("last_name"),
-                'stranding': dict_result.get("stranding"),
+                'strandings': dict_result.get("strandings"),
             }
 
             result_list.append(entity)
         return jsonify(result_list), 200
 
-    # Incorrect request found
     else:
-        response = make_response(jsonify(Error="Method not found"))
+        response = make_response(
+            jsonify(Error="Method not allowed on /users. Use GET to get all users."))
         response.mimetype = "application/json"
-        response.status_code = 404
+        response.status_code = 405
 
         return response
-
-
-
-
-
-# Check that JWT is valid and if not, return None, otherwise return sub value
-def validate_authorization_page(req, jwt):
-    # If authorization does not exist, throw 401
-    if id_token == None:
-        return None
-
-    try:
-        # Verify that JWT is valid
-        id_info = id_token.verify_oauth2_token(jwt, req, CLIENT_ID)
-    except:
-        # If invalid, set to None
-        id_info = None
-
-    if id_info == None:
-        return None
-    else:
-        return id_info['sub']
-
-# Add user to datastore if does not exist already
-def add_user(sub, first_name, last_name):
-    # Create a mammal entity with given values
-    new_user = datastore.entity.Entity(key=client.key(constants.users))
-    new_user.update({"username": sub, "first_name": first_name, "last_name": last_name})
-
-    # Send created mammal to datastore
-    client.put(new_user)
-
-# Check if user exists in datastore. Return None if not found. Otherwise, return user.
-def user_exists(sub):
-    query = client.query(kind=constants.users)
-    query.add_filter('username', '=', sub)
-
-    results = list(query.fetch())
-
-    if len(results) == 0:
-        return None
-
-    return results
 
 
 @app.route("/")
